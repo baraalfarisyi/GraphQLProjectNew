@@ -1,5 +1,8 @@
 ﻿using HotChocolate.AspNetCore.Authorization;
 using Library.Models;
+using Microsoft.Extensions.Options;
+using Newtonsoft.Json;
+using OrderService.Kafka;
 using System.Security.Claims;
 
 namespace OrderService.GraphQL
@@ -7,28 +10,34 @@ namespace OrderService.GraphQL
     public class Mutation
     {
 
-        public async Task<OrderDetail> AddOrderAsync(OrderData input, ClaimsPrincipal claimsPrincipal, [Service] StudyCaseDbContext context)
+        [Authorize]
+        public async Task<OrderData> SubmitOrderAsync(OrderKafka input, ClaimsPrincipal claimsPrincipal, [Service] IOptions<KafkaSettings> settings)
         {
-            string userName = claimsPrincipal.Identity.Name;
-            var user = context.Users.Where(u => u.Username == userName).FirstOrDefault();
-            if (user == null) return new OrderDetail();
+            var userName = claimsPrincipal.Identity.Name;
 
-            var order = new Order { Code = input.Code, UserId = user.Id };
-
-            context.Orders.Add(order);
-            await context.SaveChangesAsync();
-
-            var orderDetail = new OrderDetail
+            var order = new OrderData
             {
-                OrderId = order.Id,
-                ProductId = input.ProductId,
-                Quantity = input.Quantity,
+                Code = Guid.NewGuid().ToString(),
+                UserName = userName
             };
 
-            var result = context.OrderDetails.Add(orderDetail);
-            await context.SaveChangesAsync();
+            List<ODetail> details = new();
+            foreach (var item in input.Details)
+            {
+                var detail = new ODetail
+                {
+                    ProductId = item.ProductId,
+                    Quantity = item.Quantity
+                };
+                details.Add(detail);
+            }
+            order.Details = details;
+            var dts = DateTime.Now.ToString();
+            var key = "order-" + dts;
+            var val = JsonConvert.SerializeObject(order);
 
-            return result.Entity;
+            var result = await KafkaHelper.SendMessage(settings.Value, "studycase", key, val);
+            return order;
         }
 
     }

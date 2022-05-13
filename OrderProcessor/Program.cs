@@ -1,12 +1,8 @@
-﻿// See https://aka.ms/new-console-template for more information
-using Confluent.Kafka;
-using Confluent.Kafka.Admin;
+﻿using Confluent.Kafka;
+using Library.Models;
 using Microsoft.Extensions.Configuration;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
-using System.Net;
-using Microsoft.EntityFrameworkCore;
-using Library.Models;
+
 
 Console.WriteLine("Order Procesor App");
 
@@ -29,7 +25,7 @@ Console.CancelKeyPress += (_, e) =>
     cts.Cancel();
 };
 
-using (var consumer = new ConsumerBuilder<int, string>(config).Build())
+using (var consumer = new ConsumerBuilder<string, string>(config).Build())
 {
     Console.WriteLine("Connected");
     consumer.Subscribe(topic);
@@ -39,14 +35,29 @@ using (var consumer = new ConsumerBuilder<int, string>(config).Build())
         {
             var cr = consumer.Consume(cts.Token); // blocking
             Console.WriteLine($"Consumed record with key: {cr.Message.Key} and value: {cr.Message.Value}");
-
+            OrderData ordersData = JsonConvert.DeserializeObject<OrderData>(cr.Message.Value);
             // EF
             using (var context = new StudyCaseDbContext())
             {
-                Order order = new Order();
-                order.UserId= cr.Message.Key;
-                order.Code = cr.Message.Value;
-
+                var user = context.Users.Where(o => o.Username == ordersData.UserName).SingleOrDefault();
+               
+                var order = new Order
+                {
+                    Code = ordersData.Code,
+                    UserId = user.Id
+                };
+                context.Orders.Add(order);
+                foreach (var item in ordersData.Details)
+                {
+                    var detail = new OrderDetail
+                    {
+                        OrderId = order.Id,
+                        ProductId = item.ProductId,
+                        Quantity = item.Quantity
+                    };
+                    order.OrderDetails.Add(detail);
+                }
+                //Console.WriteLine($"userId {order.UserId}");
                 context.Orders.Add(order);
                 context.SaveChanges();
             }
